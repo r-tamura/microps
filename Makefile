@@ -5,7 +5,8 @@ DRIVERS = driver/dummy.o
 OBJS = util.o \
 			 net.o
 TESTS = test/step0.exe \
-			  test/step1.exe
+			  test/step1.exe \
+				test/step2.exe \
 
 CFLAGS := $(CFLAGS) -g -W -Wall -Wno-unused-parameter -iquote .
 
@@ -13,6 +14,7 @@ ifeq ($(shell uname),Linux)
   # Linux specific settings
   BASE = platform/linux
   CFLAGS := $(CFLAGS) -pthread -iquote $(BASE)
+	OBJS := $(OBJS) $(BASE)/intr.o
 endif
 
 ifeq ($(shell uname),Darwin)
