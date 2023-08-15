@@ -9,6 +9,7 @@
 
 /*
  * 割り込み要求
+ * IRQ: Interrupt Request
  */
 struct irq_entry
 {

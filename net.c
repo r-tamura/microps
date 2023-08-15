@@ -37,7 +37,7 @@ int net_device_register(struct net_device *dev)
     snprintf(dev->name, sizeof(dev->name), "net%d", dev->index);
     dev->next = devices;
     devices = dev;
-    infof("registered, dev=%s type=%0x04x", dev->name, dev->type);
+    infof("registered, dev=%s, type=0x%04x", dev->name, dev->type);
     return 0;
 }
 
