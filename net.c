@@ -159,7 +159,7 @@ int net_input_handler(uint16_t type, const uint8_t *data, size_t len, struct net
     {
         if (proto->type == type)
         {
-            /* Exercise 4-1: プロトコルの受信キューにエントリを挿入 */
+            /* Day1 P72 Exercise 4-1: プロトコルの受信キューにエントリを挿入 */
             entry = memory_alloc(sizeof(*entry) + len);
             if (!entry)
             {
@@ -171,7 +171,7 @@ int net_input_handler(uint16_t type, const uint8_t *data, size_t len, struct net
             memcpy(entry->data, data, len);
 
             void *result;
-            result = queue_push(&proto->queue, &entry);
+            result = queue_push(&proto->queue, entry);
             if (!result)
             {
                 errorf("queue_push() failed");
@@ -182,11 +182,36 @@ int net_input_handler(uint16_t type, const uint8_t *data, size_t len, struct net
             debugf("queue pushed (num:%u), dev=%s, type=0x%04x, len=%zu",
                    proto->queue.num, dev->name, type, len);
             debugdump(data, len);
+            intr_raise_irq(INTR_IRQ_SOFTIRQ);
             return 0;
         }
     }
 
     /* unsupported protocol */
+    return 0;
+}
+
+/* ソフトウェア割り込みハンドラ　*/
+int net_softirq_handler(void)
+{
+    struct net_protocol *proto;
+    struct net_protocol_queue_entry *entry;
+    for (proto = protocols; proto; proto = proto->next)
+    {
+        while (1)
+        {
+            entry = queue_pop(&proto->queue);
+            if (!entry)
+            {
+                break;
+            }
+            debugf("queue popped (num:%u), dev=%s, type=0x%04x, len=%zu",
+                   proto->queue.num, entry->dev->name, proto->type, entry->len);
+            debugdump(entry->data, entry->len);
+            proto->handler(entry->data, entry->len, entry->dev);
+            memory_free(entry);
+        }
+    }
     return 0;
 }
 
