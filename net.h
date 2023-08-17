@@ -28,9 +28,27 @@
 #define NET_PROTOCOL_TYPE_ARP 0x0806
 #define NET_PROTOCOL_TYPE_IPV6 0x86dd
 
+/*
+ * プロトコルファミリ（アドレスファミリ）
+ * [プロトコルファミリとは｜「分かりそう」で「分からない」でも「分かった」気になれるIT用語辞典](https://wa3.i-3-i.info/word13166.html)
+ *
+ * Linuxではsocket()の第一引数で指定するdomainがプロトコルファミリに相当する。ファミリとなっているが通常は1つのプロトコルのケースになることが多い
+ * > Normally only a single protocol exists to support a particular socket type within a given protocol family
+ * [socket(2) - Linux manual page](https://man7.org/linux/man-pages/man2/socket.2.html)
+ */
+#define NET_IFACE_FAMIRY_IP 1
+#define NET_IFACE_FAMILY_IPV6 2
+
+/*
+ * iface->iface.familyをNET_IFACE(iface)->familyで書けるようにするマクロ
+ * ip_iface型の最初の要素がnet_iface型であるのでip_iface型のポインタをnet_iface型のポインタにキャストすることができる
+ */
+#define NET_IFACE(x) ((struct net_iface *)(x))
+
 struct net_device
 {
-  struct net_device *next; // 次のデバイスへのポインタ
+  struct net_device *next;  // 次のデバイスへのポインタ
+  struct net_iface *ifaces; // デバイスとインタフェースは1対多の関係
   unsigned int index;
   char name[IFNAMSIZ];
   // [What does the second 't' stand for in 'uint8_t'? - Quora](https://www.quora.com/What-does-the-second-t-stand-for-in-uint8_t)
@@ -67,10 +85,22 @@ struct net_device_ops
   int (*transmit)(struct net_device *dev, uint16_t type, const uint8_t *data, size_t len, const void *dst);
 };
 
+/* 抽象的なインタフェース */
+struct net_iface
+{
+  struct net_iface *next;
+  struct net_device *dev; // インタフェースを持つデバイス側へのポインタ
+  int family;
+};
+
 extern struct net_device *
 net_device_alloc(void);
 extern int
 net_device_register(struct net_device *dev);
+extern int
+net_device_add_iface(struct net_device *dev, struct net_iface *iface);
+extern struct net_iface *
+net_device_get_iface(struct net_device *dev, int family);
 extern int
 net_device_output(struct net_device *dev, uint16_t type, const uint8_t *data, size_t len, const void *dst);
 

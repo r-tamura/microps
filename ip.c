@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include "platform.h"
+
 #include "util.h"
 #include "net.h"
 #include "ip.h"
@@ -24,6 +26,8 @@ struct ip_hdr
 
 const ip_addr_t IP_ADDR_ANY = 0x00000000;
 const ip_addr_t IP_ADDR_BROADCAST = 0xffffffff;
+
+static struct ip_iface *ifaces;
 
 /*
  * Network binary TO Printable text
@@ -102,12 +106,92 @@ ip_dump(const uint8_t *data, size_t len)
     funlockfile(stderr);
 }
 
+struct ip_iface *
+ip_iface_alloc(const char *unicast, const char *network)
+{
+    struct ip_iface *iface;
+    ip_addr_t network_addr;
+
+    iface = memory_alloc(sizeof(*iface));
+    if (!iface)
+    {
+        errorf("memory_alloc() failed");
+        return NULL;
+    }
+    NET_IFACE(iface)->family = NET_IFACE_FAMIRY_IP;
+
+    /* Day2 P23 Exercise 7-3: IPインタフェースにアドレス情報を設定 */
+    // (1) iface->unicast : 引数 unicast を文字列からバイナリ値へ変換して設定する)
+    if (ip_addr_pton(unicast, &iface->unicast) == -1)
+    {
+        errorf("ip_addr_pton() failed: unicast=%s", unicast);
+        memory_free(iface);
+        return NULL;
+    }
+    // (2) iface->netmask : 引数 netmask を文字列からバイナリ値へ変換して設定する
+    if (ip_addr_pton(network, &iface->netmask) == -1)
+    {
+        errorf("ip_addr_pton() failed: network=%s", network);
+        memory_free(iface);
+        return NULL;
+    }
+    // (3) iface->broadcast : iface->unicast と iface->netmask の値から算出して設定する
+    network_addr = iface->unicast & iface->netmask;
+    iface->broadcast = network_addr | ~iface->netmask;
+    /* Exercise 7-3 end */
+
+    return iface;
+}
+
+int ip_iface_register(struct net_device *dev, struct ip_iface *iface)
+{
+    char addr1[IP_ADDR_STR_LEN];
+    char addr2[IP_ADDR_STR_LEN];
+    char addr3[IP_ADDR_STR_LEN];
+
+    /* Day2 P24 Exercise 7-4: IPインタフェースの登録 */
+    if (net_device_add_iface(dev, NET_IFACE(iface)) == -1)
+    {
+        errorf("net_device_add_iface() failed");
+        return -1;
+    }
+
+    iface->next = ifaces;
+    ifaces = iface;
+
+    /* Exercise 7-4 end */
+
+    infof("registered: dev=%s, unicast=%s, netmask=%s, broadcast=%s", dev->name,
+          ip_addr_ntop(iface->unicast, addr1, sizeof(addr1)),
+          ip_addr_ntop(iface->netmask, addr2, sizeof(addr2)),
+          ip_addr_ntop(iface->broadcast, addr3, sizeof(addr3)));
+    return 0;
+}
+
+struct ip_iface *
+ip_iface_select(ip_addr_t addr)
+{
+    /* Day2 Exercise 7-5: IPインタフェースの検索 */
+    struct ip_iface *entry;
+    for (entry = ifaces; entry; entry = entry->next)
+    {
+        if (addr == entry->unicast)
+        {
+            return entry;
+        }
+    }
+    return NULL;
+    /* Exercise 7-5 end */
+}
+
 static void
 ip_input(const uint8_t *data, size_t len, struct net_device *dev)
 {
     struct ip_hdr *hdr;
     uint8_t v;
     uint16_t hlen, total, offset, sum;
+    struct ip_iface *iface;
+    char addr[IP_ADDR_STR_LEN];
 
     if (len < IP_HDR_SIZE_MIN)
     {
@@ -116,7 +200,7 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
     }
     hdr = (struct ip_hdr *)data;
 
-    /* DAY2 P14 Exercise 6-1: IPデータグラムの検証 */
+    /* Day2 P14 Exercise 6-1: IPデータグラムの検証 */
     v = hdr->vhl >> 4;
     if (v != IP_VERSION_IPV4)
     {
@@ -157,7 +241,24 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
         errorf("fragments does not support");
         return;
     }
-    debugf("dev=%s, protocol=%u, total=%u", dev->name, hdr->protocol, total);
+
+    /* Day2 Exercise 7-6: IPデータグラムのフィルタリング */
+    // デバイスに紐づくIPインタフェースを取得
+    iface = ip_iface_select(hdr->dst);
+    if (!iface || NET_IFACE(iface)->dev != dev)
+    {
+        errorf("no interface");
+        return;
+    }
+
+    // 宛先IPアドレスの検証
+    if (hdr->dst != iface->unicast && hdr->dst != IP_ADDR_BROADCAST && hdr->dst != iface->broadcast)
+    {
+        return;
+    }
+    /* Exercise 7-6 end */
+
+    debugf("dev=%s, iface=%s, protocol=%u, total=%u", dev->name, ip_addr_ntop(iface->unicast, addr, sizeof(addr)), hdr->protocol, total);
     ip_dump(data, total);
 }
 
