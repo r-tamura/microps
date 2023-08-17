@@ -26,10 +26,18 @@ struct ip_hdr
     uint8_t options[];
 };
 
+struct ip_protocol
+{
+    struct ip_protocol *next;
+    uint8_t type;
+    void (*handler)(const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst, struct ip_iface *iface);
+};
+
 const ip_addr_t IP_ADDR_ANY = 0x00000000;
 const ip_addr_t IP_ADDR_BROADCAST = 0xffffffff;
 
 static struct ip_iface *ifaces;
+static struct ip_protocol *protocols;
 
 /*
  * Network binary TO Printable text
@@ -186,6 +194,38 @@ ip_iface_select(ip_addr_t addr)
     /* Exercise 7-5 end */
 }
 
+int ip_protocol_register(uint8_t type, void (*handler)(const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst, struct ip_iface *iface))
+{
+    struct ip_protocol *entry;
+
+    /* Exercise 9-1: 重複登録の確認 */
+    for (entry = protocols; entry; entry = entry->next)
+    {
+        if (type == entry->type)
+        {
+            errorf("already registered type=%u ", type);
+            return -1;
+        }
+    }
+    /* Exrrcise 9-1 end */
+
+    /* Exercise 9-2: プロトコルの登録 */
+    entry = memory_alloc(sizeof(*entry));
+    if (!entry)
+    {
+        errorf("memory_alloc() failed");
+        return -1;
+    }
+    entry->type = type;
+    entry->handler = handler;
+    entry->next = protocols;
+    protocols = entry;
+    /* Exercise 9-2 end */
+
+    infof("registered: type=%u", entry->type);
+    return 0;
+}
+
 static void
 ip_input(const uint8_t *data, size_t len, struct net_device *dev)
 {
@@ -209,7 +249,7 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
         errorf("not IPv4");
         return;
     }
-    hlen = hdr->vhl & 0x0f;
+    hlen = (hdr->vhl & 0x0f) << 2;
     if (len < hlen)
     {
         errorf("should not be short than header");
@@ -263,6 +303,20 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
 
     debugf("dev=%s, iface=%s, protocol=%u, total=%u", dev->name, ip_addr_ntop(iface->unicast, addr, sizeof(addr)), hdr->protocol, total);
     ip_dump(data, total);
+
+    /* Exercise 9-3: プロトコルの検索 */
+    struct ip_protocol *entry;
+    for (entry = protocols; entry; entry = entry->next)
+    {
+        if (hdr->protocol == entry->type)
+        {
+            entry->handler((uint8_t *)hdr + 1, total - hlen, hdr->src, hdr->dst, iface);
+            return;
+        }
+    }
+    /* Exercise 9-3 end */
+
+    /* unsupported protocol */
 }
 
 /*
