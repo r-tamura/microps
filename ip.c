@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <string.h>
 
 #include "platform.h"
 
@@ -226,7 +228,8 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
      * 送信側でチェックサムを計算するときはヘッダのチェックサム値は0としているので、
      * 受信側でチェックサムを計算すると0になることを確認する
      */
-    if (cksum16((uint16_t *)hdr, hlen << 2, 0) != 0)
+    sum = cksum16((uint16_t *)hdr, hlen << 2, 0);
+    if (sum != 0)
     {
         errorf("invalid checksum");
         return;
@@ -260,6 +263,132 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
 
     debugf("dev=%s, iface=%s, protocol=%u, total=%u", dev->name, ip_addr_ntop(iface->unicast, addr, sizeof(addr)), hdr->protocol, total);
     ip_dump(data, total);
+}
+
+/*
+ * data: ヘッダを含むIPパケット
+ */
+static int
+ip_output_device(struct ip_iface *iface, const uint8_t *data, size_t len, ip_addr_t dst)
+{
+    uint8_t hwaddr[NET_DEVICE_ADDR_LEN] = {};
+
+    if (NET_IFACE(iface)->dev->flags & NET_DEVICE_FLAG_NEED_ARP)
+    {
+        if (dst == iface->broadcast || dst == IP_ADDR_BROADCAST)
+        {
+            memcpy(hwaddr, NET_IFACE(iface)->dev->broadcast, NET_DEVICE_ADDR_LEN);
+        }
+        else
+        {
+            errorf("arp not implemented");
+            return -1;
+        }
+    }
+
+    /* Day2 Exercise 8-4: デバイスから送信 */
+    return net_device_output(NET_IFACE(iface)->dev, NET_PROTOCOL_TYPE_IP, data, len, hwaddr);
+    /* Exercise 8-4 end */
+}
+
+static ssize_t
+ip_output_core(struct ip_iface *iface, uint8_t protocol, const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst, uint16_t id, uint16_t offset)
+{
+    uint8_t buf[IP_TOTAL_SIZE_MAX];
+    struct ip_hdr *hdr;
+    uint16_t hlen, total;
+    char addr[IP_ADDR_STR_LEN];
+
+    hdr = (struct ip_hdr *)buf;
+    /* Day2 Exercise 8-3: IPデータグラムの生成 */
+    hlen = IP_HDR_SIZE_MIN >> 2;
+    hdr->vhl = (IP_VERSION_IPV4 << 4) | hlen;
+    hdr->tos = 0;
+    total = hton16(len + IP_HDR_SIZE_MIN);
+    hdr->total = total;
+    hdr->id = hton16(id);
+    // フラグメンテーションは未実装なのでflagは0
+    hdr->offset = hton16(offset);
+    hdr->ttl = 255;
+    hdr->protocol = protocol;
+    hdr->src = src;
+    hdr->dst = dst;
+    // チェックサムはIPアドレスも含むので最後に計算する
+    hdr->sum = 0;
+    hdr->sum = cksum16((uint16_t *)hdr, IP_HDR_SIZE_MIN, 0);
+    memcpy(hdr + 1, data, len);
+
+    /* Exercise 8-3 end */
+    debugf("dev=%s, dst=%s, protocol=%u, len=%u", NET_IFACE(iface)->dev->name, ip_addr_ntop(dst, addr, sizeof(addr)), protocol, len);
+    ip_dump(buf, total);
+    return ip_output_device(iface, buf, total, dst);
+}
+
+static uint16_t
+ip_generate_id(void)
+{
+    static mutex_t mutex = MUTEX_INITIALIZER;
+    static uint16_t id = 128;
+    uint16_t ret;
+
+    mutex_lock(&mutex);
+    ret = id++;
+    mutex_unlock(&mutex);
+    return ret;
+}
+
+// Note: size_tとssize_tの違い
+// [【2022年最新版】size_tとssize_tを使い分けてSegmentation Faultを予防する](https://www.servernote.net/article.cgi?id=use-size-t-and-ssize-t-on-c)
+ssize_t
+ip_output(uint8_t protocol, const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst)
+{
+    struct ip_iface *iface;
+    char addr[IP_ADDR_STR_LEN];
+    char addr2[IP_ADDR_STR_LEN];
+    char addr3[IP_ADDR_STR_LEN];
+    uint16_t id;
+
+    if (src == IP_ADDR_ANY)
+    {
+        errorf("invalid src");
+        return -1;
+    }
+    else
+    {
+        /* Day2 Exercise 8-1: IPインタフェースの検索 */
+        iface = ip_iface_select(src);
+        if (!iface)
+        {
+            errorf("no interface");
+            return -1;
+        }
+        /* Exercise 8-1 end*/
+
+        /* Day2 Exercise 8-2: 宛先へ到達可能か確認 */
+        if ((dst < (iface->unicast & iface->netmask) || dst > iface->broadcast) && dst != IP_ADDR_BROADCAST)
+        {
+            errorf("no route, netaddr=%s, brdcst=%s, dst=%s",
+                   ip_addr_ntop(iface->unicast & iface->netmask, addr, sizeof(addr)),
+                   ip_addr_ntop(iface->broadcast, addr2, sizeof(addr2)),
+                   ip_addr_ntop(dst, addr3, sizeof(addr3)));
+            return -1;
+        }
+        /* Exercise 8-2 end */
+    }
+
+    // フラグメンテーションは未実装
+    if (NET_IFACE(iface)->dev->mtu < IP_HDR_SIZE_MIN + len)
+    {
+        errorf("too large, dev=%s, mtu=%u < %zu", NET_IFACE(iface)->dev->name, NET_IFACE(iface)->dev->mtu, IP_HDR_SIZE_MIN + len);
+        return -1;
+    }
+    id = ip_generate_id();
+    if (ip_output_core(iface, protocol, data, len, iface->unicast, dst, id, 0) == -1)
+    {
+        errorf("ip_output_core() failed");
+        return -1;
+    }
+    return len;
 }
 
 int ip_init(void)

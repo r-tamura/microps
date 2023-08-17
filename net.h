@@ -27,6 +27,8 @@
 #define NET_PROTOCOL_TYPE_IP 0x0800
 #define NET_PROTOCOL_TYPE_ARP 0x0806
 #define NET_PROTOCOL_TYPE_IPV6 0x86dd
+#define NET_DEVICE_FLAG_P2P 0x0040
+#define NET_DEVICE_FLAG_NEED_ARP 0x0100
 
 /*
  * プロトコルファミリ（アドレスファミリ）
