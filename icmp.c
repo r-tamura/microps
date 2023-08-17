@@ -1,9 +1,12 @@
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "util.h"
 #include "ip.h"
 #include "icmp.h"
+
+#define ICMP_BUFSIZ IP_PAYLOAD_SIZE_MAX
 
 struct icmp_hdr
 {
@@ -108,6 +111,46 @@ void icmp_input(const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst, s
   /* Exercise 10-1 end */
   debugf("%s => %s, len=%zu", ip_addr_ntop(src, addr1, sizeof(addr1)), ip_addr_ntop(dst, addr2, sizeof(addr2)), len);
   icmp_dump(data, len);
+  switch (hdr->type)
+  {
+  case ICMP_TYPE_ECHO:
+    /* Exercise 11-3: ICMPの出力関数を呼び出す */
+    // 元々の送信先（dst）がブロードキャストアドレスのときもあるので、返信の送信元は自身のインタフェースのユニキャストアドレスにする
+    icmp_output(ICMP_TYPE_ECHOREPLY, 0, hdr->values, (uint8_t *)(hdr + 1), len - ICMP_HDR_SIZE, iface->unicast, src);
+    /* Exercise 11-3 end */
+    break;
+  default:
+    /* ignore */
+    break;
+  }
+}
+
+int icmp_output(uint8_t type, uint8_t code, uint32_t values, const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst)
+{
+  uint8_t buf[ICMP_BUFSIZ];
+  struct icmp_hdr *hdr;
+  size_t msg_len; /* ICMPメッセージの長さ（ヘッダ+データ）*/
+  char addr[IP_ADDR_STR_LEN];
+  char addr2[IP_ADDR_STR_LEN];
+
+  hdr = (struct icmp_hdr *)buf;
+
+  /* Exercise 11-1: ICMPメッセージの生成 */
+  hdr->type = type;
+  hdr->code = code;
+  hdr->sum = 0;
+  hdr->values = hton32(values);
+  memcpy(hdr + 1, data, len);
+  msg_len = ICMP_HDR_SIZE + len;
+  hdr->sum = cksum16((uint16_t *)buf, msg_len, 0);
+  /* Exercise 11-1 end */
+
+  debugf("%s => %s, len=%zu", ip_addr_ntop(src, addr, sizeof(addr)), ip_addr_ntop(dst, addr2, sizeof(addr2)), msg_len);
+  icmp_dump(buf, msg_len);
+
+  /* Exercise 11-2: IPの出力関数を呼び出してメッセージを送信 */
+  return ip_output(IP_PROTOCOL_ICMP, buf, msg_len, src, dst);
+  /* Exercise 11-2 end */
 }
 
 int icmp_init(void)
