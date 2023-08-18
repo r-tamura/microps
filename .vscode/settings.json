@@ -1,3 +1,8 @@
 {
-  "C_Cpp.default.compilerPath": "/usr/bin/gcc"
+  "C_Cpp.default.compilerPath": "/usr/bin/gcc",
+  "files.associations": {
+    "*.elfapp": "platformio-debug.asm",
+    "fcntl.h": "c"
+  },
+  "editor.tabSize": 4
 }
