@@ -174,6 +174,7 @@ ether_tap_isr(unsigned int irq, void *id)
 
     dev = (struct net_device *)id;
     pfd.fd = PRIV(dev)->fd;
+    pfd.events = POLLIN; // 読み込み可能データの有無を調べる
     while (1)
     {
         // タイムアウト時間を0に設定したpoll()で読み込み可能なデータの存在を確認
@@ -193,11 +194,11 @@ ether_tap_isr(unsigned int irq, void *id)
         }
         // pollの戻り値が0の場合はタイムアウトを意味する
         // Note: retが0になってしまう
-        // if (ret == 0)
-        // {
-        //   /* No frames to input immediately */
-        //   break;
-        // }
+        if (ret == 0)
+        {
+            /* No frames to input immediately */
+            break;
+        }
         ether_input_helper(dev, ether_tap_read);
     }
     return 0;
