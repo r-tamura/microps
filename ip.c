@@ -249,6 +249,10 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
         errorf("not IPv4");
         return;
     }
+    /*
+     * ヘッダ長の値(IHL)は4オクテット単位
+     * [RFC 791 - Internet Protocol](https://datatracker.ietf.org/doc/html/rfc791#section-3.1)
+     */
     hlen = (hdr->vhl & 0x0f) << 2;
     if (len < hlen)
     {
@@ -262,13 +266,12 @@ ip_input(const uint8_t *data, size_t len, struct net_device *dev)
         return;
     }
     /* チェックサムの検証
-     * ヘッダ長の値(IHL)は4オクテット単位
-     * [RFC 791 - Internet Protocol](https://datatracker.ietf.org/doc/html/rfc791#section-3.1)
+
      *
      * 送信側でチェックサムを計算するときはヘッダのチェックサム値は0としているので、
      * 受信側でチェックサムを計算すると0になることを確認する
      */
-    sum = cksum16((uint16_t *)hdr, hlen << 2, 0);
+    sum = cksum16((uint16_t *)hdr, hlen, 0);
     if (sum != 0)
     {
         errorf("invalid checksum");
