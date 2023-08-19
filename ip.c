@@ -361,8 +361,8 @@ ip_output_core(struct ip_iface *iface, uint8_t protocol, const uint8_t *data, si
     hlen = IP_HDR_SIZE_MIN >> 2;
     hdr->vhl = (IP_VERSION_IPV4 << 4) | hlen;
     hdr->tos = 0;
-    total = hton16(len + IP_HDR_SIZE_MIN);
-    hdr->total = total;
+    total = len + IP_HDR_SIZE_MIN;
+    hdr->total = hton16(total);
     hdr->id = hton16(id);
     // フラグメンテーションは未実装なのでflagは0
     hdr->offset = hton16(offset);
@@ -376,7 +376,8 @@ ip_output_core(struct ip_iface *iface, uint8_t protocol, const uint8_t *data, si
     memcpy(hdr + 1, data, len);
 
     /* Exercise 8-3 end */
-    debugf("dev=%s, dst=%s, protocol=%u, len=%u", NET_IFACE(iface)->dev->name, ip_addr_ntop(dst, addr, sizeof(addr)), protocol, len);
+    debugf("dev=%s, dst=%s, protocol=%u, payload_len=%u, total=%u",
+           NET_IFACE(iface)->dev->name, ip_addr_ntop(dst, addr, sizeof(addr)), protocol, len, total);
     ip_dump(buf, total);
     return ip_output_device(iface, buf, total, dst);
 }
