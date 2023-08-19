@@ -205,6 +205,35 @@ arp_cache_insert(ip_addr_t pa, const uint8_t *ha)
     return cache;
 }
 
+static int arp_request(struct net_iface *iface, ip_addr_t tpa)
+{
+    // ARP要求メッセージ仕様
+    // [RFC 5227: IPv4 Address Conflict Detection](https://www.rfc-editor.org/rfc/rfc5227#section-1.1)
+    struct arp_ether_ip request;
+
+    /* Exercise 15-2: ARP要求のメッセージを生成する */
+    request.hdr.hrd = hton16(ARP_HRD_ETHER);
+    request.hdr.pro = hton16(ARP_PRO_IP);
+    request.hdr.hln = ETHER_ADDR_LEN;
+    request.hdr.pln = IP_ADDR_LEN;
+    request.hdr.op = hton16(ARP_OP_REQUEST);
+    memcpy(&request.sha, iface->dev->addr, request.hdr.hln);
+    // NOTE:
+    // > The 'sender IP address' field MUST be set to all zeroes
+    memcpy(&request.spa, &((struct ip_iface *)iface)->unicast, request.hdr.pln);
+    // ARPリクエストのTarget Hardware Addressは無視されるが、RFC5227では0にすることが推奨されている
+    // > The 'target hardware address' field is ignored and SHOULD be set to all zeroes.
+    memset(&request.tha, 0, request.hdr.hln);
+    memcpy(&request.tpa, &tpa, request.hdr.pln);
+    /* Exercise 15-2 end */
+    debugf("dev=%s, len=%zu", iface->dev->name, sizeof(request));
+    arp_dump((uint8_t *)&request, sizeof(request));
+
+    /* Exercise 15-3: デバイスの送信関数を呼び出してARP要求のメッセージを送信する */
+    return net_device_output(iface->dev, ETHER_TYPE_ARP, (uint8_t *)&request, sizeof(request), iface->dev->broadcast);
+    /* Exercise 15-3 end */
+}
+
 static int arp_reply(struct net_iface *iface, const uint8_t *tha,
                      ip_addr_t tpa, const uint8_t *dst)
 {
@@ -291,7 +320,6 @@ int arp_resolve(struct net_iface *iface, ip_addr_t pa, uint8_t *ha)
     char addr1[IP_ADDR_STR_LEN];
     char addr2[ETHER_ADDR_STR_LEN];
 
-    debugf("dev type: %d", iface->dev->type);
     if (iface->dev->type != NET_DEVICE_TYPE_ETHERNET)
     {
         debugf("unsupported hardware address type");
@@ -307,8 +335,28 @@ int arp_resolve(struct net_iface *iface, ip_addr_t pa, uint8_t *ha)
     if (!cache)
     {
         debugf("cache not found, pa=%s", ip_addr_ntop(pa, addr1, sizeof(addr1)));
+        /* Exercise 15-1: ARPキャッシュに問い合わせ中のエントリを作成 */
+        cache = arp_cache_alloc();
+        if (!cache)
+        {
+            errorf("could not allocate cache entry");
+            mutex_unlock(&mutex);
+            return ARP_RESOLVE_ERROR;
+        }
+        cache->state = ARP_CACHE_STATE_INCOMPLETE;
+        memcpy(&cache->pa, &pa, IP_ADDR_LEN);
+        gettimeofday(&cache->timestamp, NULL);
+        /* Exercise 15-1 end */
         mutex_unlock(&mutex);
-        return ARP_RESOLVE_ERROR;
+        arp_request(iface, pa);
+        return ARP_RESOLVE_INCOMPLETE;
+    }
+    // 見つかったキャッシュエントリがINCOMPLETE状態の場合、パケットロスの可能性があるため再送
+    if (cache->state == ARP_CACHE_STATE_INCOMPLETE)
+    {
+        mutex_unlock(&mutex);
+        arp_request(iface, pa);
+        return ARP_RESOLVE_INCOMPLETE;
     }
     memcpy(ha, cache->ha, ETHER_ADDR_LEN);
     mutex_unlock(&mutex);
