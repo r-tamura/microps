@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "platform.h"
 
@@ -26,8 +27,17 @@ struct net_protocol_queue_entry
     uint8_t data[];
 };
 
+struct net_timer
+{
+    struct net_timer *next;
+    struct timeval interval;
+    struct timeval last;
+    void (*handler)(void);
+};
+
 static struct net_device *devices;
 static struct net_protocol *protocols;
+static struct net_timer *timers;
 
 struct net_device *
 net_device_alloc(void)
@@ -186,6 +196,47 @@ int net_protocol_register(uint16_t type, void (*handler)(const uint8_t *data, si
     proto->next = protocols;
     protocols = proto;
     infof("registered, type=0x%04x", type);
+    return 0;
+}
+
+int net_timer_register(struct timeval interval, void (*handler)(void))
+{
+    struct net_timer *timer;
+
+    /* Exercise 16-1: タイマーの登録 */
+    timer = memory_alloc(sizeof(*timer));
+    if (!timer)
+    {
+        errorf("memory_alloc() failed");
+        return -1;
+    }
+    timer->interval = interval;
+    gettimeofday(&timer->last, NULL);
+    timer->handler = handler;
+    timer->next = timers;
+    timers = timer;
+    /* Exercise 16-1 end */
+    infof("registered, interval={%d, %d}", interval.tv_sec, interval.tv_usec);
+    return 0;
+}
+
+int net_timer_handler(void)
+{
+    struct net_timer *timer;
+    struct timeval now, diff;
+
+    for (timer = timers; timer; timer = timer->next)
+    {
+        gettimeofday(&now, NULL);
+        timersub(&now, &timer->last, &diff);
+        // [timercmp(3): timeval operations - Linux man page](https://linux.die.net/man/3/timercmp)
+        // > returns true (nonzero) or false (0) depending on the result of the comparison.
+        if (timercmp(&timer->interval, &diff, <) != 0)
+        {
+            timer->handler();
+            timer->last = now;
+        }
+    }
     return 0;
 }
 

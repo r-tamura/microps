@@ -26,6 +26,7 @@ TESTS = test/step0.exe \
 		test/step13.exe \
 		test/step14.exe \
 		test/step15.exe \
+		test/step16.exe \
 
 CFLAGS := $(CFLAGS) -g -W -Wall -Wno-unused-parameter -iquote .
 
@@ -33,15 +34,16 @@ TAP_NAME = tap0
 TAP_ADDR = 192.0.2.1/24
 
 ifeq ($(shell uname),Linux)
-  # Linux specific settings
-  BASE = platform/linux
-  CFLAGS := $(CFLAGS) -pthread -iquote $(BASE)
+	# Linux specific settings
+	BASE = platform/linux
+	CFLAGS := $(CFLAGS) -pthread -iquote $(BASE)
+	LDFLAGS := $(LDFLAGS) -lrt
 	DRIVERS := $(DRIVERS) $(BASE)/driver/ether_tap.o
 	OBJS := $(OBJS) $(BASE)/intr.o
 endif
 
 ifeq ($(shell uname),Darwin)
-  # macOS specific settings
+	# macOS specific settings
 endif
 
 .SUFFIXES:
