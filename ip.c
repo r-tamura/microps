@@ -10,6 +10,7 @@
 #include "util.h"
 #include "net.h"
 #include "ip.h"
+#include "arp.h"
 
 struct ip_hdr
 {
@@ -338,8 +339,13 @@ ip_output_device(struct ip_iface *iface, const uint8_t *data, size_t len, ip_add
         }
         else
         {
-            errorf("arp not implemented");
-            return -1;
+            /* Exercise 14-5: arp_resolve() を呼び出してアドレスを解決する */
+            int ret = arp_resolve((struct net_iface *)iface, dst, hwaddr);
+            if (ret != ARP_RESOLVE_FOUND)
+            {
+                return ret;
+            }
+            /* Exercise 14-5 end */
         }
     }
 
