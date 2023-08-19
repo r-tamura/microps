@@ -27,6 +27,7 @@ TESTS = test/step0.exe \
 		test/step14.exe \
 		test/step15.exe \
 		test/step16.exe \
+		test/step17.exe \
 
 CFLAGS := $(CFLAGS) -g -W -Wall -Wno-unused-parameter -iquote .
 
@@ -71,7 +72,7 @@ tap:
 	sudo ip addr add ${TAP_ADDR} dev tap0
 	sudo ip link set ${TAP_NAME} up
 
-.PHONY: untap
+.PHONY: tap-rm
 tap-rm:
 	sudo ip link set ${TAP_NAME} down
 	sudo ip tuntap del mode tap name ${TAP_NAME}
