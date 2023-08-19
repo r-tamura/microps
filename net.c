@@ -11,6 +11,7 @@
 #include "ip.h"
 #include "icmp.h"
 #include "arp.h"
+#include "udp.h"
 
 struct net_protocol
 {
@@ -368,6 +369,13 @@ int net_init(void)
         errorf("icmp_init() failure");
         return -1;
     }
+    /* Exercise 18-4: UDPの初期化関数を呼び出す */
+    if (udp_init() == -1)
+    {
+        errorf("udp_init() failure");
+        return -1;
+    }
+    /* Exercise 18-4 end */
     infof("initialized");
     return 0;
 }
