@@ -209,11 +209,10 @@ udp_input(const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst, struct 
     // つまり、受信キューエントリの長さ(data[]は0?) + (UDP（ヘッダ+ペイロード）の長さ - UDPヘッダの長さ)
     entry = memory_alloc(sizeof(*entry) + len - sizeof(*hdr));
     entry->foreign.addr = src;
-    entry->foreign.port = hdr->src;
+    entry->foreign.port = hton16(hdr->src);
     entry->len = len - sizeof(*hdr);
     memcpy(entry->data, hdr + 1, entry->len);
-    queue_push(&pcb->queue, &entry);
-
+    queue_push(&pcb->queue, entry);
     /* Exercise 19-1 end */
     debugf("queue pushed: id=%d, num%d", udp_pcb_id(pcb), pcb->queue.num);
     mutex_unlock(&mutex);
