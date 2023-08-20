@@ -33,6 +33,7 @@ TESTS = test/step0.exe \
 		test/step19.exe \
 		test/step20-1.exe \
 		test/step20-2.exe \
+		test/step21.exe \
 
 CFLAGS := $(CFLAGS) -g -W -Wall -Wno-unused-parameter -iquote .
 
@@ -45,7 +46,7 @@ ifeq ($(shell uname),Linux)
 	CFLAGS := $(CFLAGS) -pthread -iquote $(BASE)
 	LDFLAGS := $(LDFLAGS) -lrt
 	DRIVERS := $(DRIVERS) $(BASE)/driver/ether_tap.o
-	OBJS := $(OBJS) $(BASE)/intr.o
+	OBJS := $(OBJS) $(BASE)/intr.o $(BASE)/sched.o
 endif
 
 ifeq ($(shell uname),Darwin)

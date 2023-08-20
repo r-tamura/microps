@@ -55,6 +55,7 @@ mutex_unlock(mutex_t *mutex)
 // Note: SIGUSR1はユーザーが自由に使えるシグナル
 // [Miscellaneous Signals (The GNU C Library)](https://www.gnu.org/software/libc/manual/html_node/Miscellaneous-Signals.html)
 #define INTR_IRQ_SOFTIRQ SIGUSR1
+#define INTR_IRQ_EVENT SIGUSR2
 
 #define INTR_IRQ_SHARED 0x0001
 
@@ -72,5 +73,26 @@ intr_shutdown(void);
 
 extern int
 intr_init(void);
+
+/*
+ * Scheduler
+ */
+struct sched_ctx
+{
+    pthread_cond_t cond; // スレッドを休止させるために使用する共用変数
+    int interrupted;     // シグナルに割り込まれたことを示すフラグ
+    int wc               /* wait count */
+};
+
+extern int
+sched_ctx_init(struct sched_ctx *ctx);
+extern int
+sched_ctx_destroy(struct sched_ctx *ctx);
+extern int
+sched_sleep(struct sched_ctx *ctx, mutex_t *mutex, const struct timespec *abstime);
+extern int
+sched_wakeup(struct sched_ctx *ctx);
+extern int
+sched_interrupt(struct sched_ctx *ctx);
 
 #endif

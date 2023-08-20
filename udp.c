@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <errno.h>
 
 #include "platform.h"
 
@@ -44,7 +45,7 @@ struct udp_pcb
     int state;
     struct ip_endpoint local;
     struct queue_head queue; /* receive queue */
-    int wc;                  /* wait count PCBを使用中のスレッド数 */
+    struct sched_ctx ctx;
 };
 
 /* PCBの受信キューエントリ*/
@@ -89,6 +90,7 @@ udp_pcb_alloc(void)
         if (pcb->state == UDP_PCB_STATE_FREE)
         {
             pcb->state = UDP_PCB_STATE_OPEN;
+            sched_ctx_init(&pcb->ctx);
             return pcb;
         }
     }
@@ -99,13 +101,14 @@ static void
 udp_pcb_release(struct udp_pcb *pcb)
 {
     struct queue_entry *entry;
-    // 使用中のスレッドが存在する場合、すぐに解放できない
-    if (pcb->wc > 0)
+    pcb->state = UDP_PCB_STATE_CLOSING; // PCBをすぐに開放できるとは限らない
+    // クローズ状態になっていることを休止中のタスクへ通知
+    // sched_ctx_destroyは他の休止中のタスクが存在するとき
+    if (sched_ctx_destroy(&pcb->ctx) == -1)
     {
-        pcb->state = UDP_PCB_STATE_CLOSING;
+        sched_wakeup(&pcb->ctx);
         return;
     }
-    pcb->state = UDP_PCB_STATE_FREE;
     pcb->local.addr = IP_ADDR_ANY;
     pcb->local.port = 0;
     while (1)
@@ -226,6 +229,7 @@ udp_input(const uint8_t *data, size_t len, ip_addr_t src, ip_addr_t dst, struct 
     queue_push(&pcb->queue, entry);
     /* Exercise 19-1 end */
     debugf("queue pushed: id=%d, num%d", udp_pcb_id(pcb), pcb->queue.num);
+    sched_wakeup(&pcb->ctx); // 受信キューにエントリが追加されたことを休止中のタスクへ通知
     mutex_unlock(&mutex);
 }
 
@@ -280,6 +284,26 @@ udp_output(struct ip_endpoint *src, struct ip_endpoint *dst, const uint8_t *data
     return len;
 }
 
+/**
+ * 有効なすべてのPCBに割り込みを発生させます
+ */
+static void
+event_handler(void *arg)
+{
+    struct udp_pcb *pcb;
+
+    (void)arg; // ?
+    mutex_lock(&mutex);
+    for (pcb = pcbs; pcb < tailof(pcbs); pcb++)
+    {
+        if (pcb->state == UDP_PCB_STATE_OPEN)
+        {
+            sched_interrupt(&pcb->ctx);
+        }
+    }
+    mutex_unlock(&mutex);
+}
+
 int udp_init(void)
 {
     /* Exercise 18-3: IPの上位プロトコルとしてUDPを登録する */
@@ -289,6 +313,11 @@ int udp_init(void)
         return -1;
     }
     /* Exercise 18-3 end */
+    if (net_event_subscribe(event_handler, NULL) == -1)
+    {
+        errorf("net_event_subscribe() failure");
+        return -1;
+    }
     return 0;
 }
 
@@ -423,6 +452,7 @@ udp_recvfrom(int id, uint8_t *buf, size_t size, struct ip_endpoint *foreign)
     struct udp_pcb *pcb;
     struct udp_queue_entry *entry;
     ssize_t len;
+    int err;
 
     mutex_lock(&mutex);
     pcb = udp_pcb_get(id);
@@ -441,11 +471,16 @@ udp_recvfrom(int id, uint8_t *buf, size_t size, struct ip_endpoint *foreign)
         {
             break;
         }
-        pcb->wc++;
-        mutex_unlock(&mutex);
-        sleep(1);
-        mutex_lock(&mutex);
-        pcb->wc--;
+        // 通知(sched_wakeup or sched_interrupt)があるまで休止
+        err = sched_sleep(&pcb->ctx, &mutex, NULL);
+        // sched_intrruptが呼ばれたときは、割り込みがあったことを設定して終了
+        if (err)
+        {
+            debugf("interrupted");
+            mutex_unlock(&mutex);
+            errno = EINTR;
+            return -1;
+        }
         if (pcb->state == UDP_PCB_STATE_CLOSING)
         {
             debugf("closed");

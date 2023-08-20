@@ -144,6 +144,9 @@ intr_thread(void *arg)
         case SIGUSR1:
             net_softirq_handler();
             break;
+        case SIGUSR2:
+            net_event_handler();
+            break;
         default:
             for (entry = irqs; entry; entry = entry->next)
             {
@@ -201,5 +204,6 @@ int intr_init(void)
     sigaddset(&sigmask, SIGHUP);
     sigaddset(&sigmask, SIGALRM); // timer用シグナル
     sigaddset(&sigmask, SIGUSR1);
+    sigaddset(&sigmask, SIGUSR2);
     return 0;
 }
