@@ -12,6 +12,7 @@
 #include "icmp.h"
 #include "arp.h"
 #include "udp.h"
+#include "tcp.h"
 
 struct net_protocol
 {
@@ -422,6 +423,13 @@ int net_init(void)
         return -1;
     }
     /* Exercise 18-4 end */
+    /* Exercise 22-2: TCPの初期化関数を呼び出す */
+    if (tcp_init() == -1)
+    {
+        errorf("tcp_init() failure");
+        return -1;
+    }
+    /* Exercise 22-2 end */
     infof("initialized");
     return 0;
 }
