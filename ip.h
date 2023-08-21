@@ -26,6 +26,7 @@
 
 typedef uint32_t ip_addr_t;
 
+// Note: この構造体はネットワークバイトオーダーであることに注意
 struct ip_endpoint
 {
     ip_addr_t addr;

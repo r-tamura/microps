@@ -103,7 +103,7 @@ udp_pcb_release(struct udp_pcb *pcb)
     struct queue_entry *entry;
     pcb->state = UDP_PCB_STATE_CLOSING; // PCBをすぐに開放できるとは限らない
     // クローズ状態になっていることを休止中のタスクへ通知
-    // sched_ctx_destroyは他の休止中のタスクが存在するとき
+    // sched_ctx_destroyは他の休止中のタスクが存在するときエラーを返す
     if (sched_ctx_destroy(&pcb->ctx) == -1)
     {
         sched_wakeup(&pcb->ctx);
@@ -140,7 +140,7 @@ udp_pcb_select(ip_addr_t addr, uint16_t port)
 }
 
 /*
- * PCBリストのインデックスでPCBを取得する
+ * PCB IDでPCBを検索する
  */
 static struct udp_pcb *
 udp_pcb_get(int id)
@@ -162,7 +162,7 @@ udp_pcb_get(int id)
 }
 
 /*
- * マッチするPCBのインデックスを取得する
+ * 指定されたPCBのIDを取得する
  */
 static int udp_pcb_id(struct udp_pcb *pcb)
 {

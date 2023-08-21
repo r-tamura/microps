@@ -81,7 +81,7 @@ struct sched_ctx
 {
     pthread_cond_t cond; // スレッドを休止させるために使用する共用変数
     int interrupted;     // シグナルに割り込まれたことを示すフラグ
-    int wc               /* wait count */
+    int wc;              /* wait count */
 };
 
 extern int
