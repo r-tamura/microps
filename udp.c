@@ -258,8 +258,8 @@ udp_output(struct ip_endpoint *src, struct ip_endpoint *dst, const uint8_t *data
     total = len + sizeof(*hdr);
     pseudo.len = ntoh16(total);
 
-    hdr->src = ntoh16(src->port);
-    hdr->dst = ntoh16(dst->port);
+    hdr->src = src->port;
+    hdr->dst = dst->port;
     hdr->len = ntoh16(total);
     hdr->sum = 0;
     memcpy(hdr + 1, data, len);

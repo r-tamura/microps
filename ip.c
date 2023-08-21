@@ -116,7 +116,7 @@ int ip_endpoint_pton(const char *p, struct ip_endpoint *n)
     {
         return -1;
     }
-    n->port = port;
+    n->port = hton16(port);
     return 0;
 }
 
@@ -126,9 +126,7 @@ ip_endpoint_ntop(const struct ip_endpoint *n, char *p, size_t size)
     size_t offset;
     ip_addr_ntop(n->addr, p, size);
     offset = strlen(p);
-    // NOTE: 資料ではntoh16でバイトオーダー変換しているが、ip_endpointのportはホストバイトオーダーなので、そのまま出力でOK? ip_endpoint_ptonではntoh16で変換していない。
-    snprintf(p + offset, size - offset, ":%u", n->port);
-    // snprintf(p + offset, size - offset, ":%u", ntoh16(n->port));
+    snprintf(p + offset, size - offset, ":%u", ntoh16(n->port));
     return p;
 }
 
