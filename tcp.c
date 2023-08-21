@@ -39,6 +39,9 @@
 #define TCP_PCB_STATE_CLOSE_WAIT 10
 #define TCP_PCB_STATE_LAST_ACK 11
 
+#define TCP_DEFAULT_RTO_MICROSEC 200000
+#define TCP_RETRANSMISSION_DEATLINES_SEC 12
+
 struct pseudo_hdr
 {
     uint32_t src;
@@ -111,6 +114,21 @@ struct tcp_pcb
     uint16_t mss;
     uint8_t buf[65535]; // receive buffer
     struct sched_ctx ctx;
+    struct queue_head queue; // retransmission queue
+};
+
+struct tcp_queue_entry
+{
+    struct timeval first; // 初回送信時刻
+    struct timeval last;  // 最終（前回）の送信時刻
+    unsigned int rto;     // micro seconds (retransmission timeout)
+
+    uint32_t seq; // セグメントのシーケンス番号
+    uint8_t flg;  // セグメントの制御フラグ
+    // その他情報は再送時にPCBから取得する
+
+    size_t len;
+    uint8_t data[];
 };
 
 static mutex_t mutex = MUTEX_INITIALIZER;
@@ -314,6 +332,92 @@ tcp_output_segment(uint32_t seq, uint32_t ack, uint8_t flg, uint16_t wnd, uint8_
     return len;
 }
 
+/*
+ * TCP Retransmission
+ * NOTE: TCP Retransmission funcsions must be called after mutex locked
+ */
+
+static int
+tcp_retransmit_queue_add(struct tcp_pcb *pcb, uint32_t seq, uint8_t flg, uint8_t *data, size_t len)
+{
+    struct tcp_queue_entry *entry;
+
+    entry = memory_alloc(sizeof(*entry) + len);
+    if (!entry)
+    {
+        errorf("memory_alloc() failure");
+        return -1;
+    }
+    entry->rto = TCP_DEFAULT_RTO_MICROSEC;
+    entry->seq = seq;
+    entry->flg = flg;
+    entry->len = len;
+    memcpy(entry->data, data, entry->len);
+    gettimeofday(&entry->first, NULL);
+    entry->last = entry->first;
+    if (!queue_push(&pcb->queue, entry))
+    {
+        errorf("queue_push() failure");
+        memory_free(entry);
+        return -1;
+    }
+    return 0;
+}
+
+static void
+tcp_retransmit_queue_cleanup(struct tcp_pcb *pcb)
+{
+    struct tcp_queue_entry *entry;
+
+    while (1)
+    {
+        entry = queue_peek(&pcb->queue);
+        if (!entry)
+        {
+            break;
+        }
+        // ACKの応答が得られていなかった削除しない
+        if (entry->seq >= pcb->snd.una)
+        {
+            break;
+        }
+        entry = queue_pop(&pcb->queue);
+        debugf("remove, seq=%u, flags=%s, len=%u", entry->seq, tcp_flg_ntoa(entry->flg), entry->len);
+        memory_free(entry);
+    }
+    return;
+}
+
+static void
+tcp_retransmit_queue_emit(void *arg, void *data)
+{
+    struct tcp_pcb *pcb;
+    struct tcp_queue_entry *entry;
+    struct timeval now, diff, timeout;
+
+    pcb = (struct tcp_pcb *)arg;
+    entry = (struct tcp_queue_entry *)data;
+    gettimeofday(&now, NULL);
+    timersub(&now, &entry->first, &diff); // 初回送信時からの経過時間
+    // タイムアウトを超えていたらコネクションを破棄
+    if (diff.tv_sec >= TCP_RETRANSMISSION_DEATLINES_SEC)
+    {
+        pcb->state = TCP_PCB_STATE_CLOSED;
+        sched_wakeup(&pcb->ctx);
+        return;
+    }
+    timeout = entry->last;
+    timeval_add_usec(&timeout, entry->rto); // 再送時刻の計算
+    // 再送時刻を超えていたら再送
+    if (timercmp(&now, &timeout, >))
+    {
+        tcp_output_segment(entry->seq, pcb->rcv.nxt, entry->flg, pcb->rcv.wnd, entry->data, entry->len,
+                           &pcb->local, &pcb->foreign);
+        entry->last = now;
+        entry->rto *= 2; // exponential backoff
+    }
+}
+
 static ssize_t
 tcp_output(struct tcp_pcb *pcb, uint8_t flg, uint8_t *data, size_t len)
 {
@@ -325,9 +429,10 @@ tcp_output(struct tcp_pcb *pcb, uint8_t flg, uint8_t *data, size_t len)
     {
         seq = pcb->iss;
     }
+    // シーケンス番号が増加するセグメントのみ再送キューへ格納（単純なACKやRSTセグメントは除外）
     if (TCP_FLG_ISSET(flg, TCP_FLG_SYN | TCP_FLG_FIN) || len)
     {
-        /* TODO: retransmission queue */
+        tcp_retransmit_queue_add(pcb, seq, flg, data, len);
     }
     return tcp_output_segment(seq, pcb->rcv.nxt, flg, pcb->rcv.wnd, data, len,
                               &pcb->local, &pcb->foreign);
@@ -515,7 +620,7 @@ tcp_segment_arrives(struct tcp_segment_info *seg, uint8_t flags, uint8_t *data, 
     switch (pcb->state)
     {
     case TCP_PCB_STATE_SYN_RECEIVED:
-        // 送信セグメントに対する妥当なACKかどうかの判断
+        // まだACKを受け取っていない送信データに対するACKかどうかの判断
         // seg->ack <= pcb->snd.nxt: 次に送ろうとしている（まだ送ってない）番号のACKが来るのはおかしい
         if (pcb->snd.una <= seg->ack && seg->ack <= pcb->snd.nxt)
         {
@@ -534,7 +639,7 @@ tcp_segment_arrives(struct tcp_segment_info *seg, uint8_t flags, uint8_t *data, 
         if (pcb->snd.una < seg->ack && seg->ack <= pcb->snd.nxt)
         {
             pcb->snd.una = seg->ack;
-            /* TODO: Any segments on the retransmission queue which are thereby entirely acknowledged are removed */
+            tcp_retransmit_queue_cleanup(pcb); // 受信の確認が取れたら再送キューから削除
             /* ignore: Users should receive positive acknowledgments for buffers
             　　which have been SENT and fully acknowledged (i.e., SEND buffer should be returned with "ok" response) */
             if (pcb->snd.wl1 < seg->seq || (pcb->snd.wl1 == seg->seq && pcb->snd.wl2 <= seg->ack))
@@ -685,8 +790,28 @@ event_handler(void *arg)
     mutex_unlock(&mutex);
 }
 
+/*
+ * 受信キューのすべてのエントリに対して再送処理を行う
+ */
+static void
+tcp_timer(void)
+{
+    struct tcp_pcb *pcb;
+    mutex_lock(&mutex);
+    for (pcb = pcbs; pcb < tailof(pcbs); pcb++)
+    {
+        if (pcb->state == TCP_PCB_STATE_FREE)
+        {
+            continue;
+        }
+        queue_foreach(&pcb->queue, tcp_retransmit_queue_emit, pcb);
+    }
+    mutex_unlock(&mutex);
+}
+
 int tcp_init(void)
 {
+    struct timeval interval = {0, 100000};
     /* Exercise 22-1: IPの上位プロトコルとしてTCPを登録する */
     if (ip_protocol_register(IP_PROTOCOL_TCP, tcp_input) == -1)
     {
@@ -695,6 +820,11 @@ int tcp_init(void)
     }
     /* Exercise 22-1 end */
     net_event_subscribe(event_handler, NULL);
+    if (net_timer_register(interval, tcp_timer) == -1)
+    {
+        errorf("net_timer_register() failure");
+        return -1;
+    }
     return 0;
 }
 
