@@ -101,7 +101,7 @@ struct tcp_pcb
         uint32_t wl1; // 前回のウィンドウサイズ変更時のシーケンス番号
         uint32_t wl2; // 前回のウィンドウサイズ変更時のACK番号
     } snd;
-    uint32_t iss; // 初期シーケンス番号
+    uint32_t iss; // 初期シーケンス番号 initial send sequence number
     // 受信時に使う情報
     struct
     {
@@ -109,7 +109,7 @@ struct tcp_pcb
         uint16_t wnd;
         uint16_t up;
     } rcv;
-    uint32_t irs;
+    uint32_t irs; // initial receive sequence number
     uint16_t mtu;
     uint16_t mss;
     uint8_t buf[65535]; // receive buffer
@@ -525,6 +525,21 @@ tcp_segment_arrives(struct tcp_segment_info *seg, uint8_t flags, uint8_t *data, 
         /*
          * 1st check the ACK bit
          */
+        if (TCP_FLG_ISSET(flags, TCP_FLG_ACK))
+        {
+            if (seg->ack <= pcb->iss || seg->ack > pcb->snd.nxt)
+            {
+                tcp_output_segment(seg->ack, 0, TCP_FLG_RST, 0, NULL, 0, local, foreign);
+                return;
+            }
+            // o -----snd.una-----(seg->ack)----snd.nxt------> // 相手に受信されたことが未確認なデータに対するACKはacceptable
+            // x -----(seg->ack)----snd.una----snd.nxt-------> // ACK済みのデータに対するACKはnot acceptable
+            // x -----snd.una----->snd.nxt-----(seg->ack)----> // 送ってもないデータに対するACKはnot acceptable
+            if (pcb->snd.una <= seg->ack && seg->ack <= pcb->snd.nxt)
+            {
+                acceptable = 1;
+            }
+        }
         /*
          * 2nd check the RST bit
          */
@@ -533,7 +548,41 @@ tcp_segment_arrives(struct tcp_segment_info *seg, uint8_t flags, uint8_t *data, 
          */
         /*
          * 4th check the SYN bit
+         * SYN or SYN+ACKを受信した場合
          */
+        if (TCP_FLG_ISSET(flags, TCP_FLG_SYN))
+        {
+            pcb->rcv.nxt = seg->seq + 1;
+            pcb->irs = seg->seq;
+            if (acceptable)
+            {
+                // ACK番号は送信者が次に要求しているシーケンス番号なので、ACK番号のセグメントは確認が取れていない
+                pcb->snd.una = seg->ack;
+                tcp_retransmit_queue_cleanup(pcb);
+            }
+            if (pcb->snd.una > pcb->iss)
+            {
+                // こちらのSYNに対するSYN+ACK受信したとき
+                pcb->state = TCP_PCB_STATE_ESTABLISHED;
+                tcp_output(pcb, TCP_FLG_ACK, NULL, 0); // 相手のSYNに対するACK
+                // NOTE: not sepecified in the RFC793, but send window initialization requried
+                pcb->snd.wnd = seg->wnd;
+                pcb->snd.wl1 = seg->seq;
+                pcb->snd.wl2 = seg->ack;
+                sched_wakeup(&pcb->ctx);
+                // ignore: continue processing at the sixth step below where the URG bit is checked
+                return;
+            }
+            else
+            {
+                // すれちがいで相手もSYNを送信したとき
+                // こちらがゆずって最初のSYNを取り消すような対応
+                pcb->state = TCP_PCB_STATE_SYN_RECEIVED;
+                tcp_output(pcb, TCP_FLG_SYN | TCP_FLG_ACK, NULL, 0);
+                /* ignore: If there are other controls or text in the segment, queue them for processing after the ESTABLISHED state has been reached */
+                return;
+            }
+        }
         /*
          * 5th if neither of the SYN or RST bits is set then drop the segment and return
          */
@@ -834,7 +883,6 @@ int tcp_open_rfc793(struct ip_endpoint *local, struct ip_endpoint *foreign, int 
     char ep1[IP_ENDPOINT_STR_LEN];
     char ep2[IP_ENDPOINT_STR_LEN];
     int state, id;
-
     mutex_lock(&mutex);
     pcb = tcp_pcb_alloc();
     if (!pcb)
@@ -845,10 +893,24 @@ int tcp_open_rfc793(struct ip_endpoint *local, struct ip_endpoint *foreign, int 
     }
     if (active)
     {
-        errorf("active open is not implemented yet");
-        tcp_pcb_release(pcb);
-        mutex_unlock(&mutex);
-        return -1;
+        debugf("active open: local=%s, foreign=%s, connecting...",
+               ip_endpoint_ntop(local, ep1, sizeof(ep1)),
+               ip_endpoint_ntop(foreign, ep2, sizeof(ep2)));
+        pcb->local = *local;
+        pcb->foreign = *foreign;
+        pcb->rcv.wnd = sizeof(pcb->buf); // 初期受信ウィンドうサイズは受信バッファの最大サイズ
+        pcb->iss = random();
+        if (tcp_output(pcb, TCP_FLG_SYN, NULL, 0) == -1)
+        {
+            errorf("tcp_output() failure");
+            pcb->state = TCP_PCB_STATE_CLOSED;
+            tcp_pcb_release(pcb);
+            mutex_unlock(&mutex);
+            return -1;
+        }
+        pcb->snd.nxt = pcb->iss;
+        pcb->snd.nxt = pcb->iss + 1;
+        pcb->state = TCP_PCB_STATE_SYN_SENT;
     }
     else
     {
